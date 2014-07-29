@@ -1,0 +1,9 @@
+*~
+*.beam
+erl_crash.dump
+ebin/
+priv/log/
+deps/
+log/
+/dbus.log
+/.rebar
