@@ -10,36 +10,45 @@
 -behaviour(gen_server).
 
 -include("ebluez.hrl").
--include_lib("dbus/include/dbus.hrl").
+-include_lib("dbus/include/dbus_client.hrl").
 
--export([start_link/0]).
-
--export([test/0]).
+-export([start_link/0,
+	 get_objects/1]).
 
 % gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
+-export([test/0]).
+
 -define(SERVER, ?MODULE).
 
--record(state, {system,
-		manager,
-		objects     = undefined   :: []}).
+-record(state, {client, 
+		bus,
+		objects = [] :: list()
+	       }).
 
-% @doc Start ebluez server
+% @doc Start ebluez client
 %
 % @end
 %
 start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    gen_server:start_link(?MODULE, [], []).
+
+
+-spec get_objects(pid()) -> list().
+get_objects(Ref) ->
+    gen_server:call(Ref, get_objects).
+
+test() ->
+    application:start(ebluez).
 
 %%%
 %%% gen_server callbacks
 %%%
 init([]) ->
-    {ok, Bus} = dbus:get_system_bus(),
-    case dbus_bus:get_object_manager(Bus, 'org.bluez', ebluez_manager, self()) of
-	{ok, Manager} ->
-	    {ok, #state{system=Bus, manager=Manager}};
+    case dbus_client:start_link(system, {gen_server, self()}, [{manager, 'org.bluez'}], []) of
+	{ok, Client} ->
+	    {ok, #state{client=Client}};
 	{error, Err} ->
 	    {stop, Err}
     end.
@@ -53,8 +62,29 @@ init([]) ->
 %%          {stop, Reason, Reply, State}   | (terminate/2 is called)
 %%          {stop, Reason, State}            (terminate/2 is called)
 %%----------------------------------------------------------------------
+handle_call({init, [Bus, _Env]}, _From, State) ->
+    {reply, ok, #state{bus=Bus}=State};
+
+handle_call(get_objects, _From, #state{objects=Objects}=State) ->
+    {reply, Objects, State};
+
+handle_call({signal, _, 'org.freedesktop.DBus.ObjectManager', 'InterfacesAdded', [Path, Ifaces]}, 
+	    _From, #state{objects=Objects}=State) ->
+    {reply, ok, State#state{objects=add_object(Path, Ifaces, Objects)}};
+
+handle_call({signal, _, 'org.freedesktop.DBus.ObjectManager', 'InterfacesRemoved', [Path, Ifaces]}, 
+	    _From, #state{objects=Objects}=State) ->
+    {reply, ok, State#state{objects=add_object(Path, Ifaces, Objects)}};
+
+handle_call({signal, Path, Iface, Signal, _Args}, _From, State) ->
+    lager:debug("Unhandled signal: ~p:~p on ~p~n", [Iface, Signal, Path]),
+    {reply, ok, State};
+
+handle_call({add_objects, Objects}, _From, State) ->
+    {reply, ok, State#state{objects=Objects}};
+
 handle_call(_Msg, _From, State) ->
-    {reply, ok, State}.
+    {reply, ignore, State}.
 
 %%----------------------------------------------------------------------
 %% Func: handle_cast/2
@@ -74,6 +104,7 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
+
 %%----------------------------------------------------------------------
 %% Func: terminate/2
 %% Purpose: Shutdown the server
@@ -81,6 +112,7 @@ handle_info(_Info, State) ->
 %%----------------------------------------------------------------------
 terminate(_Reason, _State) ->
     ok.
+
 
 %%----------------------------------------------------------------------
 %% Func: code_change/3
@@ -90,5 +122,18 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-test() ->
-    application:start(ebluez).
+%%%
+%%% Priv
+%%%
+add_object(_Path, [], Acc) ->
+    Acc;
+add_object(Path, [{IfaceName, Props} | Ifaces], Acc) ->
+    lager:debug("New object: ~p~n", [Path]),
+    case gb_trees:lookup(IfaceName, Acc) of
+	none ->
+	    Acc2 = gb_trees:insert(IfaceName, [{Path, Props}], Acc),
+	    add_object(Path, Ifaces, Acc2);
+	{value, Objects} ->
+	    Acc2 = gb_trees:update(IfaceName, [{Path, Props} | Objects], Acc),
+	    add_object(Path, Ifaces, Acc2)
+    end.
