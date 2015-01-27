@@ -7,6 +7,11 @@
                   kernel,
                   stdlib
                  ]},
+  {modules,[
+	    ebluez,
+	    ebluez_app,
+	    ebluez_sup
+	   ]},
   {mod, { ebluez_app, []}},
   {env, []}
  ]}.

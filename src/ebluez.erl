@@ -22,8 +22,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {client, 
-		bus,
+-record(state, {bus,
 		objects = [] :: list()
 	       }).
 
@@ -32,8 +31,7 @@
 % @end
 %
 start_link() ->
-    gen_server:start_link(?MODULE, [], []).
-
+    dbus_client:start_link(system, {gen_server, ?MODULE}, [{manager, 'org.bluez'}], []).
 
 -spec get_objects(pid()) -> list().
 get_objects(Ref) ->
@@ -45,13 +43,9 @@ test() ->
 %%%
 %%% gen_server callbacks
 %%%
-init([]) ->
-    case dbus_client:start_link(system, {gen_server, self()}, [{manager, 'org.bluez'}], []) of
-	{ok, Client} ->
-	    {ok, #state{client=Client}};
-	{error, Err} ->
-	    {stop, Err}
-    end.
+init([Bus, []]) ->
+    lager:debug("Init ebluez..."),
+    {ok, #state{bus=Bus}}.
 
 %%----------------------------------------------------------------------
 %% Func: handle_call/3
@@ -62,9 +56,6 @@ init([]) ->
 %%          {stop, Reason, Reply, State}   | (terminate/2 is called)
 %%          {stop, Reason, State}            (terminate/2 is called)
 %%----------------------------------------------------------------------
-handle_call({init, [Bus, _Env]}, _From, State) ->
-    {reply, ok, #state{bus=Bus}=State};
-
 handle_call(get_objects, _From, #state{objects=Objects}=State) ->
     {reply, Objects, State};
 
@@ -84,6 +75,7 @@ handle_call({add_objects, Objects}, _From, State) ->
     {reply, ok, State#state{objects=Objects}};
 
 handle_call(_Msg, _From, State) ->
+    io:format("handle_call(~p)~n", [_Msg]),
     {reply, ignore, State}.
 
 %%----------------------------------------------------------------------
